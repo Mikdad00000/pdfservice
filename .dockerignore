@@ -1,0 +1,14 @@
+# .dockerignore
+target/
+*.iml
+.git/
+.idea/
+.vscode/
+*.log
+.DS_Store
+README.md
+.gitignore
+docs/
+scripts/
+k8s/
+.env*
