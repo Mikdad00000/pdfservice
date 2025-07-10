@@ -1,6 +1,7 @@
 package com.pacgem.pdfservice.service;
 
 import com.pacgem.pdfservice.engine.PdfTransformationEngine;
+import com.pacgem.pdfservice.model.dto.TransitStickerData;
 import com.pacgem.pdfservice.model.entity.ProcessingJob;
 import com.pacgem.pdfservice.model.dto.ProcessingRequest;
 import com.pacgem.pdfservice.model.dto.ProcessingResult;
@@ -15,6 +16,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -37,23 +40,23 @@ public class PdfProcessingService {
         Timer.Sample sample = Timer.start(meterRegistry);
 
         try {
-            // 1. Save job metadata
-//            ProcessingJob job = createProcessingJob(jobId, request);
-//            jobRepository.save(job);
-//
-//            // 2. Upload original file
-//            String originalFileKey = storageService.uploadFile(file, jobId);
-//
-//            // 3. Transform PDF
-//            byte[] transformedPdf = transformationEngine.transform(file.getBytes(), request.getFormat());
-//
-//            // 4. Upload transformed file
-//            String transformedFileKey = storageService.uploadProcessedFile(transformedPdf, jobId, request.getFormat());
-//
-//            // 5. Update job status
-//            job.setStatus(ProcessingStatus.COMPLETED);
-//            job.setTransformedFileKey(transformedFileKey);
-//            jobRepository.save(job);
+            //   1. Save job metadata
+            ProcessingJob job = createProcessingJob(jobId, request);
+            jobRepository.save(job);
+
+            // 2. Upload original file
+            String originalFileKey = storageService.uploadFile(file, jobId);
+
+            // 3. Transform PDF
+            byte[] transformedPdf = transformationEngine.transform(file, request.getFormat());
+
+            // 4. Upload transformed file
+            String transformedFileKey = storageService.uploadProcessedFile(transformedPdf, jobId, request.getFormat());
+
+            // 5. Update job status
+            job.setStatus(ProcessingStatus.COMPLETED);
+            job.setTransformedFileKey(transformedFileKey);
+            jobRepository.save(job);
 
             sample.stop(Timer.builder("pdf.processing.duration")
                     .tag("format", request.getFormat())
@@ -72,7 +75,46 @@ public class PdfProcessingService {
             return failed;
         }
     }
+    @Async("pdfProcessingExecutor")
+    public CompletableFuture<ProcessingResult> processAsync(
+            String jobId, TransitStickerData data, ProcessingRequest request) {
+        Timer.Sample sample = Timer.start(meterRegistry);
 
+        try {
+            //   1. Save job metadata
+            ProcessingJob job = createProcessingJob(jobId, request);
+            jobRepository.save(job);
+
+            // 3. Transform PDF
+            byte[] transformedPdf = transformationEngine.transform(data, request.getFormat());
+
+            Files.write(Paths.get("C:\\temp\\transit-sticker.pdf"), transformedPdf);
+
+            // 4. Upload transformed file
+            String transformedFileKey = storageService.uploadProcessedFile(transformedPdf, jobId, request.getFormat());
+
+            // 5. Update job status
+            job.setStatus(ProcessingStatus.COMPLETED);
+            job.setTransformedFileKey(transformedFileKey);
+            jobRepository.save(job);
+
+            sample.stop(Timer.builder("pdf.processing.duration")
+                    .tag("format", request.getFormat())
+                    .tag("status", "success")
+                    .register(meterRegistry));
+
+            return CompletableFuture.completedFuture(new ProcessingResult(jobId,""/*transformedFileKey*/));
+        } catch (Exception e) {
+            handleProcessingError(jobId, e);
+            sample.stop(Timer.builder("pdf.processing.duration")
+                    .tag("format", request.getFormat())
+                    .tag("status", "error")
+                    .register(meterRegistry));
+            CompletableFuture<ProcessingResult> failed = new CompletableFuture<>();
+            failed.completeExceptionally(e);
+            return failed;
+        }
+    }
     public List<CompletableFuture<ProcessingResult>> processBatch(List<MultipartFile> files, String format) {
         return files.stream()
                 .map(file -> processAsync(
